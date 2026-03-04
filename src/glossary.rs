@@ -115,7 +115,10 @@ impl Term {
 /// Returns an error if the glossary file specified in the config is not found.
 pub fn extract_terms(book: &Book, config: &Config) -> Result<Vec<Term>> {
     let glossary_content = find_glossary_content(book, config.glossary_path())?;
-    Ok(parse_definition_lists(&glossary_content))
+    Ok(parse_definition_lists(
+        &glossary_content,
+        config.split_pattern(),
+    ))
 }
 
 /// Finds and returns the content of the glossary chapter.
@@ -132,7 +135,7 @@ fn find_glossary_content(book: &Book, glossary_path: &Path) -> Result<String> {
 }
 
 /// Parses definition lists from markdown content using pulldown-cmark.
-fn parse_definition_lists(content: &str) -> Vec<Term> {
+fn parse_definition_lists(content: &str, split_pattern: Option<&str>) -> Vec<Term> {
     let mut terms = Vec::new();
 
     // Enable definition list extension
@@ -171,7 +174,7 @@ fn parse_definition_lists(content: &str) -> Vec<Term> {
                         let definition = if current_definition_text.trim().is_empty() {
                             None
                         } else {
-                            Some(current_definition_text.trim().to_string())
+                            split_definition(current_definition_text.trim(), split_pattern)
                         };
                         terms.push(Term::with_definition(title, definition));
                     }
@@ -201,7 +204,7 @@ fn parse_definition_lists(content: &str) -> Vec<Term> {
                         let definition = if current_definition_text.trim().is_empty() {
                             None
                         } else {
-                            Some(current_definition_text.trim().to_string())
+                            split_definition(current_definition_text.trim(), split_pattern)
                         };
                         terms.push(Term::with_definition(title, definition));
                         current_definition_text.clear();
@@ -220,6 +223,13 @@ fn parse_definition_lists(content: &str) -> Vec<Term> {
     }
 
     terms
+}
+
+fn split_definition(definition: &str, split_pattern: Option<&str>) -> Option<String> {
+    split_pattern.map_or_else(
+        || Some(definition.to_string()),
+        |p| definition.split(p).next().map(|d| d.trim().to_string()),
+    )
 }
 
 /// Generates a URL anchor from a term name.
@@ -393,7 +403,7 @@ REST
 XPT
 : SAS Transport file format.
 ";
-        let terms = parse_definition_lists(content);
+        let terms = parse_definition_lists(content, None);
 
         assert_eq!(terms.len(), 3);
 
@@ -420,7 +430,7 @@ XPT
     #[test]
     fn test_parse_definition_lists_empty() {
         let content = "# Just a heading\n\nSome paragraph text.";
-        let terms = parse_definition_lists(content);
+        let terms = parse_definition_lists(content, None);
         assert!(terms.is_empty());
     }
 
@@ -434,5 +444,30 @@ XPT
             get_glossary_html_path(Path::new("reference/glossary.md")),
             PathBuf::from("reference/glossary.html")
         );
+    }
+
+    #[test]
+    fn test_parse_definition_split() {
+        let splitted = split_definition(
+            "Extensible Messaging and Presence Protocol -- An open-standard, XML-based technology for real-time, decentralized communication",
+            Some(" -- "),
+        );
+
+        assert!(splitted.is_some());
+        assert_eq!(
+            splitted.unwrap(),
+            "Extensible Messaging and Presence Protocol".to_string()
+        );
+    }
+
+    #[test]
+    fn test_parse_definition_split_none_config() {
+        let definition = String::from(
+            "Extensible Messaging and Presence Protocol -- An open-standard, XML-based technology for real-time, decentralized communication",
+        );
+        let splitted = split_definition(&definition, None);
+
+        assert!(splitted.is_some());
+        assert_eq!(splitted.unwrap(), definition);
     }
 }
