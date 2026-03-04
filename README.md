@@ -183,6 +183,11 @@ cargo build --release
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+## Contributors
+
+- [Ruben Talstra](https://github.com/rubentalstra) — Creator & Maintainer
+- [Juuso Elo-Rauta](https://github.com/eloraju) — Split Definitions feature ([#5](https://github.com/rubentalstra/mdbook-termlink/pull/5))
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.

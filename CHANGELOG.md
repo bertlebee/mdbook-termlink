@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-03-04
+
+### Added
+
+- **Split Definitions**: New `split-pattern` config option to split glossary definitions at a custom delimiter, showing only the first part in tooltips while keeping the full definition in the glossary (PR [#5](https://github.com/rubentalstra/mdbook-termlink/pull/5) by [@eloraju](https://github.com/eloraju))
+
+### Configuration Options
+
+- `split-pattern`: Split definitions at a delimiter for shorter tooltips (default: disabled)
+
 ## [0.0.5] - 2026-01-12
 
 ### Fixed
@@ -81,7 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `css-class`: CSS class for term links (default: `glossary-term`)
 - `case-sensitive`: Case-sensitive matching (default: `false`)
 
-[Unreleased]: https://github.com/rubentalstra/mdbook-termlink/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/rubentalstra/mdbook-termlink/compare/v0.0.6...HEAD
+
+[0.0.6]: https://github.com/rubentalstra/mdbook-termlink/compare/v0.0.5...v0.0.6
 
 [0.0.5]: https://github.com/rubentalstra/mdbook-termlink/compare/v0.0.4...v0.0.5
 
