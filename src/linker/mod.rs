@@ -31,6 +31,12 @@ pub fn add_term_links(
     let terms: Vec<&Term> = glossary.iter().collect();
     let mut linked_terms: HashSet<String> = HashSet::new();
 
+    // An empty `glossary_relative_path` is the orchestrator's signal that we
+    // are *on* the glossary page itself. In that mode, definition-list titles
+    // are a skip region so terms don't self-link to themselves, and the
+    // rendered hrefs become bare `#anchor` (same-page) URLs.
+    let on_glossary_page = glossary_relative_path.is_empty();
+
     let parser = Parser::new_ext(content, markdown_options());
     let events: Vec<Event> = parser.collect();
 
@@ -40,6 +46,7 @@ pub fn add_term_links(
         glossary_relative_path,
         config,
         &mut linked_terms,
+        on_glossary_page,
     );
 
     let mut output = String::new();
@@ -64,7 +71,8 @@ fn markdown_options() -> Options {
 /// The kind of element currently surrounding the cursor in the event stream.
 ///
 /// Only [`Context::Normal`] is safe to inject links into. Everything else
-/// (code, links, headings, image alt-text) is passed through verbatim.
+/// (code, links, headings, image alt-text, and on the glossary page itself
+/// definition-list titles) is passed through verbatim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Context {
     Normal,
@@ -72,25 +80,37 @@ enum Context {
     Link,
     Heading,
     Image,
+    /// The term title in a definition list — `API` on the line before
+    /// `: A set of protocols…`. Only tracked when we are processing the
+    /// glossary page itself, where linking the title would cause a term to
+    /// self-link in its own definition.
+    DefinitionTitle,
 }
 
 /// Returns the context that *opens* on this event, if any.
-const fn context_opened_by(event: &Event<'_>) -> Option<Context> {
+///
+/// `on_glossary_page` toggles whether `Tag::DefinitionListTitle` is treated as
+/// a skip region — only meaningful when the chapter being processed *is* the
+/// glossary file.
+const fn context_opened_by(event: &Event<'_>, on_glossary_page: bool) -> Option<Context> {
     match event {
         Event::Start(Tag::CodeBlock(_)) => Some(Context::CodeBlock),
         Event::Start(Tag::Link { .. }) => Some(Context::Link),
         Event::Start(Tag::Image { .. }) => Some(Context::Image),
         Event::Start(Tag::Heading { .. }) => Some(Context::Heading),
+        Event::Start(Tag::DefinitionListTitle) if on_glossary_page => {
+            Some(Context::DefinitionTitle)
+        }
         _ => None,
     }
 }
 
 /// Whether this event closes one of the contexts [`context_opened_by`] opens.
-const fn closes_context(event: &Event<'_>) -> bool {
+const fn closes_context(event: &Event<'_>, on_glossary_page: bool) -> bool {
     matches!(
         event,
         Event::End(TagEnd::CodeBlock | TagEnd::Link | TagEnd::Image | TagEnd::Heading(_))
-    )
+    ) || (on_glossary_page && matches!(event, Event::End(TagEnd::DefinitionListTitle)))
 }
 
 /// Walks the parser events, pushing/popping context as we cross protected
@@ -102,17 +122,18 @@ fn process_events<'a>(
     glossary_path: &str,
     config: &Config,
     linked_terms: &mut HashSet<String>,
+    on_glossary_page: bool,
 ) -> Vec<Event<'a>> {
     let mut result = Vec::with_capacity(events.len());
     let mut context_stack: Vec<Context> = vec![Context::Normal];
 
     for event in events {
-        if let Some(ctx) = context_opened_by(&event) {
+        if let Some(ctx) = context_opened_by(&event, on_glossary_page) {
             context_stack.push(ctx);
             result.push(event);
             continue;
         }
-        if closes_context(&event) {
+        if closes_context(&event, on_glossary_page) {
             context_stack.pop();
             result.push(event);
             continue;
@@ -338,5 +359,84 @@ Inline `API` should not link. Visit [the API docs](docs.html).
                 _ => String::new(),
             })
             .collect()
+    }
+
+    // -----------------------------------------------------------------
+    // process-glossary feature: empty `glossary_relative_path` signals
+    // "this IS the glossary page". Definition-list titles become a skip
+    // region, and hrefs collapse to bare `#anchor` (same-page) URLs.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn glossary_page_skips_definition_titles_but_links_body_terms() {
+        // "API" appears only as a title, "REST" only in the body — verify
+        // the body link is emitted and the title is left alone.
+        let glossary = Glossary::from_terms(vec![
+            Term::with_definition("API", Some("Application Programming Interface".to_string())),
+            Term::new("REST"),
+        ]);
+        let content = "API\n: A protocol. See also REST.\n";
+        let out = add_term_links(content, &glossary, "", &default_config()).unwrap();
+
+        assert!(
+            out.contains(r##"<a href="#rest""##),
+            "REST in the definition body must be linked: {out}"
+        );
+        assert!(
+            !out.contains(r##"href="#api""##),
+            "API as a definition title must not self-link: {out}"
+        );
+    }
+
+    #[test]
+    fn glossary_page_emits_same_page_anchor_hrefs() {
+        let glossary = Glossary::from_terms(vec![Term::new("API")]);
+        let out = add_term_links(
+            "Some prose mentioning the API.",
+            &glossary,
+            "",
+            &default_config(),
+        )
+        .unwrap();
+
+        assert!(
+            out.contains(r##"<a href="#api""##),
+            "expected bare same-page href, got: {out}"
+        );
+        assert!(
+            !out.contains("glossary.html"),
+            "no file prefix should appear in same-page anchors: {out}"
+        );
+    }
+
+    #[test]
+    fn glossary_page_skips_short_form_inside_title() {
+        // The title row "API (Application Programming Interface)" includes
+        // the short form "API" as an alternation form. Both must be skipped.
+        let glossary =
+            Glossary::from_terms(vec![Term::new("API (Application Programming Interface)")]);
+        let content = "API (Application Programming Interface)\n: The full definition here.\n";
+        let out = add_term_links(content, &glossary, "", &default_config()).unwrap();
+
+        assert!(
+            !out.contains("href=\"#"),
+            "no links should be emitted inside the title: {out}"
+        );
+    }
+
+    #[test]
+    fn non_glossary_page_still_links_definition_titles() {
+        // Outside the glossary file, definition-list titles are NOT skipped —
+        // a chapter that happens to use a definition list still gets its
+        // titles linked. Guards against the skip leaking off the glossary
+        // page.
+        let glossary = Glossary::from_terms(vec![Term::new("API")]);
+        let content = "API\n: Some local definition.\n";
+        let out = add_term_links(content, &glossary, "glossary.html", &default_config()).unwrap();
+
+        assert!(
+            out.contains(r#"<a href="glossary.html#api""#),
+            "definition-list title on a non-glossary page must still link: {out}"
+        );
     }
 }

@@ -53,7 +53,9 @@ impl TermlinkPreprocessor {
                 let Some(chapter_path) = chapter.path.as_ref() else {
                     return;
                 };
-                if self.config.is_glossary_path(chapter_path) {
+
+                let is_glossary = self.config.is_glossary_path(chapter_path);
+                if is_glossary && !self.config.process_glossary() {
                     log::debug!("Skipping glossary file: {}", chapter_path.display());
                     return;
                 }
@@ -62,8 +64,15 @@ impl TermlinkPreprocessor {
                     return;
                 }
 
-                let relative_glossary =
-                    linker::calculate_relative_path(chapter_path, &glossary_html_path);
+                // On the glossary page, pass an empty path so the linker emits
+                // same-page `#anchor` hrefs and treats definition-list titles
+                // as a skip region. Elsewhere, compute the normal relative
+                // URL to the glossary HTML.
+                let relative_glossary = if is_glossary {
+                    String::new()
+                } else {
+                    linker::calculate_relative_path(chapter_path, &glossary_html_path)
+                };
 
                 match linker::add_term_links(
                     &chapter.content,

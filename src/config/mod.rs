@@ -27,6 +27,7 @@ pub struct Config {
     aliases: HashMap<String, Vec<String>>,
     split_pattern: Option<String>,
     display_mode: DisplayMode,
+    process_glossary: bool,
 }
 
 /// Raw configuration as deserialized from `book.toml`.
@@ -41,6 +42,7 @@ struct RawConfig {
     aliases: Option<HashMap<String, Vec<String>>>,
     split_pattern: Option<String>,
     display_mode: Option<String>,
+    process_glossary: Option<bool>,
 }
 
 impl Default for Config {
@@ -54,6 +56,7 @@ impl Default for Config {
             aliases: HashMap::new(),
             split_pattern: None,
             display_mode: DisplayMode::default(),
+            process_glossary: false,
         }
     }
 }
@@ -113,6 +116,7 @@ impl Config {
             aliases: raw.aliases.unwrap_or_default(),
             split_pattern: raw.split_pattern.filter(|p| !p.is_empty()),
             display_mode,
+            process_glossary: raw.process_glossary.unwrap_or(false),
         })
     }
 
@@ -171,6 +175,17 @@ impl Config {
         self.display_mode
     }
 
+    /// Returns true if the glossary page itself should be processed.
+    ///
+    /// When true, term usages in the glossary page's prose and inside other
+    /// terms' definitions are linkified (with same-page `#anchor` hrefs), but
+    /// the definition-list titles are left untouched so a term never
+    /// self-links.
+    #[must_use]
+    pub const fn process_glossary(&self) -> bool {
+        self.process_glossary
+    }
+
     /// Returns an iterator over every configured alias (for conflict detection).
     pub fn all_aliases(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
         self.aliases.iter()
@@ -198,6 +213,7 @@ mod tests {
         assert_eq!(config.css_class(), "glossary-term");
         assert!(!config.case_sensitive());
         assert_eq!(config.display_mode(), DisplayMode::Link);
+        assert!(!config.process_glossary());
     }
 
     #[test]
@@ -270,5 +286,16 @@ mod tests {
                 DisplayMode::Link
             );
         }
+    }
+
+    #[test]
+    fn process_glossary_defaults_to_false_and_parses_true_from_book_toml() {
+        assert!(!Config::default().process_glossary());
+
+        let conf = config_from_toml(
+            "[book]\ntitle = 'T'\n[preprocessor.termlink]\nprocess-glossary = true\n",
+        )
+        .unwrap();
+        assert!(conf.process_glossary());
     }
 }
