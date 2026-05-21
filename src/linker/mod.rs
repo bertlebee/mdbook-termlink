@@ -37,8 +37,24 @@ pub fn add_term_links(
     // rendered hrefs become bare `#anchor` (same-page) URLs.
     let on_glossary_page = glossary_relative_path.is_empty();
 
+    // Sort-only path: on the glossary page with `sort-glossary = true` but
+    // `process-glossary = false`. The preprocessor's gate let us through
+    // because of the sort flag; respect the existing contract that the link
+    // pass doesn't run on the glossary page unless `process-glossary` is on.
+    if on_glossary_page && config.sort_glossary() && !config.process_glossary() {
+        let mut events: Vec<Event> = Parser::new_ext(content, markdown_options()).collect();
+        sort_definition_lists(&mut events);
+        let mut output = String::new();
+        cmark(events.into_iter(), &mut output)?;
+        return Ok(output);
+    }
+
     let parser = Parser::new_ext(content, markdown_options());
-    let events: Vec<Event> = parser.collect();
+    let mut events: Vec<Event> = parser.collect();
+
+    if on_glossary_page && config.sort_glossary() {
+        sort_definition_lists(&mut events);
+    }
 
     let processed_events = process_events(
         events,
@@ -215,6 +231,102 @@ fn replace_terms_to_events(
         events.push(Event::Text(CowStr::from(text.to_string())));
     }
     events
+}
+
+/// Sorts every `<dl>` block in `events` in place so its title/definition
+/// groups appear alphabetically by sort key. Outer structure — events between
+/// definition lists, the number of lists, and each list's bounds — is
+/// preserved.
+fn sort_definition_lists(events: &mut Vec<Event<'_>>) {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut start: Option<usize> = None;
+    for (i, ev) in events.iter().enumerate() {
+        match ev {
+            Event::Start(Tag::DefinitionList) => start = Some(i),
+            Event::End(TagEnd::DefinitionList) => {
+                if let Some(s) = start.take() {
+                    ranges.push((s, i + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    // Reverse so earlier ranges stay valid as we splice replacements in.
+    for (s, e) in ranges.into_iter().rev() {
+        let sorted = sort_one_definition_list(&events[s..e]);
+        events.splice(s..e, sorted);
+    }
+}
+
+/// Given the slice `[Start(DefinitionList), ..inner.., End(DefinitionList)]`,
+/// returns a new vector with title+definition groups sorted by key.
+fn sort_one_definition_list<'a>(slice: &[Event<'a>]) -> Vec<Event<'a>> {
+    let inner = &slice[1..slice.len() - 1];
+
+    let mut groups: Vec<(String, Vec<Event<'a>>)> = Vec::new();
+    let mut leading: Vec<Event<'a>> = Vec::new();
+    let mut current: Vec<Event<'a>> = Vec::new();
+    let mut current_title = String::new();
+    let mut title_text = String::new();
+    let mut in_title = false;
+    let mut group_started = false;
+
+    for ev in inner {
+        match ev {
+            Event::Start(Tag::DefinitionListTitle) => {
+                if !current.is_empty() {
+                    let key = sort_key_for_title(&current_title);
+                    groups.push((key, std::mem::take(&mut current)));
+                    current_title.clear();
+                }
+                in_title = true;
+                title_text.clear();
+                current.push(ev.clone());
+                group_started = true;
+            }
+            Event::End(TagEnd::DefinitionListTitle) => {
+                in_title = false;
+                current_title = title_text.trim().to_string();
+                current.push(ev.clone());
+            }
+            Event::Text(t) | Event::Code(t) if in_title => {
+                title_text.push_str(t);
+                current.push(ev.clone());
+            }
+            _ => {
+                if group_started {
+                    current.push(ev.clone());
+                } else {
+                    leading.push(ev.clone());
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        let key = sort_key_for_title(&current_title);
+        groups.push((key, current));
+    }
+
+    // Stable sort: equal keys keep source order.
+    groups.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut out = Vec::with_capacity(slice.len());
+    out.push(slice[0].clone());
+    out.extend(leading);
+    for (_, g) in groups {
+        out.extend(g);
+    }
+    out.push(slice[slice.len() - 1].clone());
+    out
+}
+
+/// Builds the alphabetical sort key for a definition-list title: the term's
+/// short form when the title matches `SHORT (Long Description)`, otherwise
+/// the full title. Lowercased so the sort is case-insensitive.
+fn sort_key_for_title(title: &str) -> String {
+    let term = Term::new(title.to_string());
+    term.short_name()
+        .map_or_else(|| title.to_lowercase(), str::to_lowercase)
 }
 
 #[cfg(test)]
@@ -437,6 +549,130 @@ Inline `API` should not link. Visit [the API docs](docs.html).
         assert!(
             out.contains(r#"<a href="glossary.html#api""#),
             "definition-list title on a non-glossary page must still link: {out}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // sort-glossary feature: when enabled, each definition list on the
+    // glossary page is sorted alphabetically. Default is off.
+    // -----------------------------------------------------------------
+
+    fn config_with_sort_glossary(sort: bool, process: bool) -> Config {
+        use mdbook_preprocessor::PreprocessorContext;
+        use mdbook_preprocessor::config::Config as MdBookConf;
+        use std::path::PathBuf;
+        use std::str::FromStr;
+        let toml = format!(
+            "[book]\ntitle = 't'\n[preprocessor.termlink]\nsort-glossary = {sort}\nprocess-glossary = {process}\n"
+        );
+        let mdb_conf = MdBookConf::from_str(&toml).unwrap();
+        let ctx = PreprocessorContext::new(PathBuf::new(), mdb_conf, String::new());
+        Config::from_context(&ctx).unwrap()
+    }
+
+    #[test]
+    fn sort_glossary_orders_definition_list_alphabetically_on_glossary_page() {
+        let glossary =
+            Glossary::from_terms(vec![Term::new("Zeta"), Term::new("Alpha"), Term::new("Mu")]);
+        let content = "Zeta\n: last letter-ish.\n\nAlpha\n: first.\n\nMu\n: middle.\n";
+        let out = add_term_links(
+            content,
+            &glossary,
+            "",
+            &config_with_sort_glossary(true, false),
+        )
+        .unwrap();
+
+        let a = out.find("Alpha").expect("Alpha missing from output");
+        let m = out.find("Mu").expect("Mu missing from output");
+        let z = out.find("Zeta").expect("Zeta missing from output");
+        assert!(a < m && m < z, "expected Alpha < Mu < Zeta in:\n{out}");
+    }
+
+    #[test]
+    fn sort_glossary_disabled_preserves_source_order() {
+        let glossary = Glossary::from_terms(vec![Term::new("Zeta"), Term::new("Alpha")]);
+        let content = "Zeta\n: last.\n\nAlpha\n: first.\n";
+        // Default config has sort-glossary=false. Need process_glossary=true
+        // so the chapter is processed on the glossary page and we can observe
+        // the (unsorted) result.
+        let out = add_term_links(
+            content,
+            &glossary,
+            "",
+            &config_with_sort_glossary(false, true),
+        )
+        .unwrap();
+        assert!(
+            out.find("Zeta").unwrap() < out.find("Alpha").unwrap(),
+            "source order should be preserved when sort is off:\n{out}"
+        );
+    }
+
+    #[test]
+    fn sort_glossary_uses_short_form_as_key() {
+        // "API (Application Programming Interface)" should sort under 'A'
+        // (short form 'API'), placing it before "Backend".
+        let glossary = Glossary::from_terms(vec![
+            Term::new("Backend"),
+            Term::new("API (Application Programming Interface)"),
+        ]);
+        let content =
+            "Backend\n: server side.\n\nAPI (Application Programming Interface)\n: a contract.\n";
+        let out = add_term_links(
+            content,
+            &glossary,
+            "",
+            &config_with_sort_glossary(true, false),
+        )
+        .unwrap();
+        assert!(
+            out.find("API").unwrap() < out.find("Backend").unwrap(),
+            "API should sort before Backend on its short form:\n{out}"
+        );
+    }
+
+    #[test]
+    fn sort_glossary_off_glossary_page_is_a_noop() {
+        // Non-empty glossary_relative_path => not the glossary page => sort
+        // must not run, even with sort-glossary=true.
+        let glossary = Glossary::from_terms(vec![Term::new("Zeta"), Term::new("Alpha")]);
+        let content = "Zeta\n: last.\n\nAlpha\n: first.\n";
+        let out = add_term_links(
+            content,
+            &glossary,
+            "glossary.html",
+            &config_with_sort_glossary(true, false),
+        )
+        .unwrap();
+        assert!(
+            out.find("Zeta").unwrap() < out.find("Alpha").unwrap(),
+            "non-glossary page should not be sorted:\n{out}"
+        );
+    }
+
+    #[test]
+    fn sort_only_mode_skips_term_linking_on_glossary_page() {
+        // sort-glossary=true && process-glossary=false: sort runs but the
+        // term-linking pass must not, preserving the existing contract that
+        // the glossary page is otherwise untouched.
+        let glossary = Glossary::from_terms(vec![Term::new("REST"), Term::new("API")]);
+        let content = "REST\n: A protocol. See also API.\n\nAPI\n: A contract.\n";
+        let out = add_term_links(
+            content,
+            &glossary,
+            "",
+            &config_with_sort_glossary(true, false),
+        )
+        .unwrap();
+        assert!(
+            !out.contains("<a "),
+            "no anchor tags expected in sort-only mode:\n{out}"
+        );
+        // And the sort still happened.
+        assert!(
+            out.find("API").unwrap() < out.find("REST").unwrap(),
+            "sort should still run in sort-only mode:\n{out}"
         );
     }
 }

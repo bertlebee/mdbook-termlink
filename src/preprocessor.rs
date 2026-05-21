@@ -55,7 +55,7 @@ impl TermlinkPreprocessor {
                 };
 
                 let is_glossary = self.config.is_glossary_path(chapter_path);
-                if is_glossary && !self.config.process_glossary() {
+                if is_glossary && !self.config.process_glossary() && !self.config.sort_glossary() {
                     log::debug!("Skipping glossary file: {}", chapter_path.display());
                     return;
                 }

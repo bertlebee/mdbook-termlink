@@ -18,6 +18,7 @@ use crate::error::{Result, TermlinkError};
 /// All fields are private to allow future changes without breaking the API.
 /// Use the getter methods to access configuration values.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Config {
     glossary_path: PathBuf,
     link_first_only: bool,
@@ -28,6 +29,7 @@ pub struct Config {
     split_pattern: Option<String>,
     display_mode: DisplayMode,
     process_glossary: bool,
+    sort_glossary: bool,
 }
 
 /// Raw configuration as deserialized from `book.toml`.
@@ -43,6 +45,7 @@ struct RawConfig {
     split_pattern: Option<String>,
     display_mode: Option<String>,
     process_glossary: Option<bool>,
+    sort_glossary: Option<bool>,
 }
 
 impl Default for Config {
@@ -57,6 +60,7 @@ impl Default for Config {
             split_pattern: None,
             display_mode: DisplayMode::default(),
             process_glossary: false,
+            sort_glossary: false,
         }
     }
 }
@@ -117,6 +121,7 @@ impl Config {
             split_pattern: raw.split_pattern.filter(|p| !p.is_empty()),
             display_mode,
             process_glossary: raw.process_glossary.unwrap_or(false),
+            sort_glossary: raw.sort_glossary.unwrap_or(false),
         })
     }
 
@@ -186,6 +191,22 @@ impl Config {
         self.process_glossary
     }
 
+    /// Returns true if the rendered glossary page should have each definition
+    /// list alphabetically sorted by entry.
+    ///
+    /// Sort key is the short form (e.g. `API` from
+    /// `API (Application Programming Interface)`) when present, otherwise the
+    /// full title, compared case-insensitively. The sort is stable, so equal
+    /// keys keep source order. Scope is one `<dl>` block at a time; prose,
+    /// headings, and the relative order of separate lists are preserved.
+    ///
+    /// As a preprocessor mdbook-termlink cannot modify the on-disk glossary
+    /// source — this option only affects the rendered HTML output.
+    #[must_use]
+    pub const fn sort_glossary(&self) -> bool {
+        self.sort_glossary
+    }
+
     /// Returns an iterator over every configured alias (for conflict detection).
     pub fn all_aliases(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
         self.aliases.iter()
@@ -214,6 +235,7 @@ mod tests {
         assert!(!config.case_sensitive());
         assert_eq!(config.display_mode(), DisplayMode::Link);
         assert!(!config.process_glossary());
+        assert!(!config.sort_glossary());
     }
 
     #[test]
@@ -297,5 +319,16 @@ mod tests {
         )
         .unwrap();
         assert!(conf.process_glossary());
+    }
+
+    #[test]
+    fn sort_glossary_defaults_to_false_and_parses_true_from_book_toml() {
+        assert!(!Config::default().sort_glossary());
+
+        let conf = config_from_toml(
+            "[book]\ntitle = 'T'\n[preprocessor.termlink]\nsort-glossary = true\n",
+        )
+        .unwrap();
+        assert!(conf.sort_glossary());
     }
 }

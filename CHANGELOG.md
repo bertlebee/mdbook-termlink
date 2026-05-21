@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-05-21
+
+### Added
+
+- **`sort-glossary` option**: when set to `true`, each definition list on the rendered glossary page is sorted alphabetically. Sort key is the term's short form (e.g. `API` from `API (Application Programming Interface)`) when present, otherwise the full title, compared case-insensitively. Sort scope is one `<dl>` block at a time; prose and the relative order of separate lists are preserved. Default is `false`, so existing setups are unchanged. As a preprocessor, mdbook-termlink cannot modify the on-disk glossary source — this option only affects the rendered HTML output.
+
+### Configuration Options
+
+- `sort-glossary`: Alphabetically sort definition lists on the rendered glossary page (default: `false`).
+
 ## [0.1.1] - 2026-05-15
 
 ### Added
@@ -136,7 +146,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `css-class`: CSS class for term links (default: `glossary-term`)
 - `case-sensitive`: Case-sensitive matching (default: `false`)
 
-[Unreleased]: https://github.com/rubentalstra/mdbook-termlink/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/rubentalstra/mdbook-termlink/compare/v0.1.2...HEAD
+
+[0.1.2]: https://github.com/rubentalstra/mdbook-termlink/compare/v0.1.1...v0.1.2
 
 [0.1.1]: https://github.com/rubentalstra/mdbook-termlink/compare/v0.1.0...v0.1.1
 

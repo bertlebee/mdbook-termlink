@@ -19,6 +19,7 @@ documentation.
 - **Term Aliases**: Define alternative names that link to the same glossary entry
 - **Short Form Support**: Automatically handles terms like "API (Application Programming Interface)"
 - **Split Definitions**: Split glossary definitions at a custom delimiter, showing only the first part in tooltips while keeping the full definition in the glossary
+- **Glossary Sorting**: Optionally render the glossary page with each definition list sorted alphabetically (short form preferred as the sort key)
 
 ## Installation
 
@@ -110,6 +111,13 @@ display-mode = "link"
 # definition list are left untouched so they don't self-link.
 process-glossary = false
 
+# Sort each definition list on the rendered glossary page alphabetically.
+# Sort key is the term's short form when present (e.g. "API" from
+# "API (Application Programming Interface)"), otherwise the full title,
+# case-insensitively. Note: this only affects the rendered HTML — as a
+# preprocessor, mdbook-termlink cannot modify the on-disk glossary source.
+sort-glossary = false
+
 # Alternative names for terms
 [preprocessor.termlink.aliases]
 API = ["apis", "api endpoints"]
@@ -128,6 +136,7 @@ REST = ["RESTful"]
 | `split-pattern`   | String  | Disabled by default       | Split definitions at pattern for short tooltips|
 | `display-mode`    | String  | `"link"`                  | Render terms as `link`, `tooltip`, or `both`   |
 | `process-glossary`| Boolean | `false`                   | Also link term usages on the glossary page itself (titles are left alone)|
+| `sort-glossary`   | Boolean | `false`                   | Alphabetically sort definition lists on the rendered glossary page (rendered HTML only; source unchanged) |
 | `aliases`         | Map     | `{}`                      | Alternative names for terms                    |
 
 
